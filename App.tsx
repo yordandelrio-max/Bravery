@@ -1,19 +1,17 @@
 
 import React, { useState, useMemo } from 'react';
-import { Species, LifeStage, BreedSize, DosageResult, ProductVariety } from './types';
-import { BRAVERY_DATA, TRANSITION_PLAN } from './constants';
+import { Species, LifeStage, DosageResult, ProductVariety } from './types';
+import { BRAVERY_DATA } from './constants';
 import { 
   Calculator as CalcIcon, 
-  Info, 
-  Activity, 
   Calendar, 
   Target, 
-  ArrowRight,
   ShieldCheck,
   Zap,
   Leaf,
   FileDown,
-  ChevronDown
+  Info,
+  ChevronRight
 } from 'lucide-react';
 // @ts-ignore
 import { jsPDF } from 'jspdf';
@@ -23,100 +21,128 @@ import autoTable from 'jspdf-autotable';
 const App: React.FC = () => {
   const [species, setSpecies] = useState<Species>(Species.DOG);
   const [stage, setStage] = useState<LifeStage>(LifeStage.ADULT);
-  const [size, setSize] = useState<BreedSize>(BreedSize.MEDIUM_LARGE);
   const [variety, setVariety] = useState<ProductVariety>(ProductVariety.CHICKEN);
-  const [weight, setWeight] = useState<number>(10);
+  const [weight, setWeight] = useState<number>(species === Species.DOG ? 10 : 4);
   const [ageMonths, setAgeMonths] = useState<number>(6);
   const [activityFactor, setActivityFactor] = useState<number>(1.4);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isGeneratingBCS, setIsGeneratingBCS] = useState(false);
 
-  // Filtrar variedades disponibles según especie y etapa
+  const interpolate = (x: number, x0: number, y0: number, x1: number, y1: number) => {
+    if (x0 === x1) return y0;
+    return y0 + (x - x0) * (y1 - y0) / (x1 - x0);
+  };
+
+  const getInterpolatedRation = (currentWeight: number, dataTable: Record<number, any>): number => {
+    const sortedWeights = Object.keys(dataTable).map(Number).sort((a, b) => a - b);
+    if (currentWeight <= sortedWeights[0]) return dataTable[sortedWeights[0]];
+    if (currentWeight >= sortedWeights[sortedWeights.length - 1]) {
+      const maxW = sortedWeights[sortedWeights.length - 1];
+      const secondMaxW = sortedWeights[sortedWeights.length - 2];
+      return interpolate(currentWeight, secondMaxW, dataTable[secondMaxW], maxW, dataTable[maxW]);
+    }
+    for (let i = 0; i < sortedWeights.length - 1; i++) {
+      const w0 = sortedWeights[i];
+      const w1 = sortedWeights[i + 1];
+      if (currentWeight >= w0 && currentWeight <= w1) {
+        return interpolate(currentWeight, w0, dataTable[w0], w1, dataTable[w1]);
+      }
+    }
+    return dataTable[sortedWeights[0]];
+  };
+
   const availableVarieties = useMemo(() => {
     if (species === Species.CAT) {
       if (stage === LifeStage.PUPPY_KITTEN) return [ProductVariety.CHICKEN];
+      if (stage === LifeStage.SENIOR) return [ProductVariety.HERRING];
       return [ProductVariety.CHICKEN, ProductVariety.SALMON];
     }
-    // Perros
     if (stage === LifeStage.PUPPY_KITTEN) return [ProductVariety.CHICKEN, ProductVariety.SALMON];
-    if (stage === LifeStage.LIGHT) return [ProductVariety.IBERIAN_PORK];
-    if (stage === LifeStage.SENIOR) return [ProductVariety.HERRING];
+    if (stage === LifeStage.LIGHT || stage === LifeStage.LIGHT_MINI) return [ProductVariety.IBERIAN_PORK];
+    if (stage === LifeStage.SENIOR || stage === LifeStage.SENIOR_MINI) return [ProductVariety.HERRING];
     return [ProductVariety.CHICKEN, ProductVariety.SALMON, ProductVariety.LAMB, ProductVariety.IBERIAN_PORK];
   }, [species, stage]);
 
-  // Asegurar que la variedad seleccionada sea válida si cambia el contexto
   useMemo(() => {
-    if (!availableVarieties.includes(variety)) {
-      setVariety(availableVarieties[0]);
-    }
+    if (!availableVarieties.includes(variety)) setVariety(availableVarieties[0]);
   }, [availableVarieties, variety]);
 
   const calculateDosage = (): DosageResult => {
     const rer = 70 * Math.pow(weight, 0.75);
     let f = activityFactor;
     if (stage === LifeStage.PUPPY_KITTEN) f = 3.0;
-    if (stage === LifeStage.SENIOR) f = 1.2;
-    if (stage === LifeStage.STERILIZED) {
-        f = (species === Species.CAT) ? 1.1 : 1.4;
-    }
+    if (stage === LifeStage.SENIOR || stage === LifeStage.SENIOR_MINI) f = 1.1; 
+    if (stage === LifeStage.STERILIZED) f = (species === Species.CAT) ? 1.1 : 1.4;
     const der = rer * f;
 
     let grams = 0;
     let productName = "";
-    let density = BRAVERY_DATA.KCAL.DOG_ADULT;
     let recommendedMeals = 2;
-    let nutrients = ["Proteína Monoproteica", "Sin Grano", "Tapioca"];
+    const nutrients = ["Grain-Free", "Natural Ingredients", "Super Premium"];
 
     if (species === Species.DOG) {
       if (stage === LifeStage.PUPPY_KITTEN) {
         recommendedMeals = ageMonths <= 4 ? 4 : 3;
-        productName = `Bravery ${variety} ${size === BreedSize.MINI ? 'Mini' : 'Med/Large'} Puppy`;
-        nutrients.push(variety === ProductVariety.SALMON ? "Omega 3 (EPA/DHA)" : "Alta Digestibilidad");
+        const isMiniPuppy = weight < 8; 
+        productName = `Bravery ${variety} ${isMiniPuppy ? 'Mini' : 'Medium/Large'} Puppy`;
+        const table = isMiniPuppy ? BRAVERY_DATA.DOG_PUPPY_MINI : BRAVERY_DATA.DOG_PUPPY_MED_LARGE;
         
-        const table = size === BreedSize.MINI ? BRAVERY_DATA.DOG_PUPPY_MINI : BRAVERY_DATA.DOG_PUPPY_MED_LARGE;
-        const weights = Object.keys(table).map(Number).sort((a, b) => Math.abs(a - weight) - Math.abs(b - weight));
-        const entry = table[weights[0] as keyof typeof table];
-        const months = Object.keys(entry).map(Number).sort((a, b) => Math.abs(a - ageMonths) - Math.abs(b - ageMonths));
-        grams = entry[months[0] as keyof typeof entry];
+        const sortedAdultWeights = Object.keys(table).map(Number).sort((a, b) => a - b);
+        let w0 = sortedAdultWeights[0], w1 = sortedAdultWeights[sortedAdultWeights.length - 1];
+        for (let i = 0; i < sortedAdultWeights.length - 1; i++) {
+          if (weight >= sortedAdultWeights[i] && weight <= sortedAdultWeights[i + 1]) {
+            w0 = sortedAdultWeights[i]; w1 = sortedAdultWeights[i + 1]; break;
+          }
+        }
+        const getValForMonth = (w: number, m: number) => {
+          const entry = table[w as keyof typeof table];
+          const months = Object.keys(entry).map(Number).sort((a, b) => a - b);
+          let m0 = months[0], m1 = months[months.length - 1];
+          for (let i = 0; i < months.length - 1; i++) {
+            if (m >= months[i] && m <= months[i + 1]) { m0 = months[i]; m1 = months[i + 1]; break; }
+          }
+          return interpolate(m, m0, entry[m0], m1, entry[m1]);
+        };
+        const v0 = getValForMonth(w0, ageMonths);
+        const v1 = getValForMonth(w1, ageMonths);
+        grams = interpolate(weight, w0, v0, w1, v1);
+
+      } else if (stage === LifeStage.ADULT_MINI) {
+        productName = `Bravery ${variety} Mini Adult Small Breeds`;
+        grams = getInterpolatedRation(weight, BRAVERY_DATA.DOG_ADULT_MINI);
+      } else if (stage === LifeStage.LIGHT_MINI) {
+        productName = `Bravery Light Iberian Pork Mini Small Breeds`;
+        grams = getInterpolatedRation(weight, BRAVERY_DATA.DOG_LIGHT_MINI);
       } else if (stage === LifeStage.LIGHT) {
-        productName = "Bravery Light Iberian Pork";
-        density = BRAVERY_DATA.KCAL.DOG_LIGHT;
-        nutrients.push("L-Carnitina", "Control de Saciedad");
-        grams = der / (density / 1000);
+        productName = `Bravery Light Iberian Pork Adult Medium/Large`;
+        grams = getInterpolatedRation(weight, BRAVERY_DATA.DOG_LIGHT_MED_LARGE);
+      } else if (stage === LifeStage.SENIOR_MINI) {
+        productName = `Bravery Herring Senior Mini Small Breeds`;
+        grams = getInterpolatedRation(weight, BRAVERY_DATA.DOG_SENIOR_MINI);
       } else if (stage === LifeStage.SENIOR) {
-        productName = "Bravery Senior Herring";
-        nutrients.push("Salud Cognitiva", "Condroprotectores");
-        grams = der / (density / 1000);
+        productName = `Bravery Herring Senior Adult Medium/Large`;
+        grams = getInterpolatedRation(weight, BRAVERY_DATA.DOG_SENIOR_MED_LARGE);
       } else {
-        productName = `Bravery ${variety} ${size === BreedSize.MINI ? 'Mini' : 'Med/Large'} Adult`;
-        const table = size === BreedSize.MINI ? BRAVERY_DATA.DOG_ADULT_MINI : BRAVERY_DATA.DOG_ADULT_MED_LARGE;
-        const weights = Object.keys(table).map(Number).sort((a, b) => Math.abs(a - weight) - Math.abs(b - weight));
-        grams = table[weights[0] as keyof typeof table];
+        productName = `Bravery ${variety} Adult Medium/Large Breeds`;
+        grams = getInterpolatedRation(weight, BRAVERY_DATA.DOG_ADULT_MED_LARGE);
       }
     } else {
+      // GATOS
       if (stage === LifeStage.PUPPY_KITTEN) {
         productName = "Bravery Chicken Kitten";
-        density = BRAVERY_DATA.KCAL.CAT_KITTEN;
         recommendedMeals = 4;
         const table = BRAVERY_DATA.CAT_KITTEN;
-        if (ageMonths <= 2) grams = table['1-2'];
-        else if (ageMonths <= 4) grams = table['2-4'];
-        else if (ageMonths <= 6) grams = table['4-6'];
-        else if (ageMonths <= 9) grams = table['6-9'];
-        else grams = table['9-12'];
+        const keys = Object.keys(table);
+        const monthKey = ageMonths <= 2 ? keys[0] : ageMonths <= 4 ? keys[1] : ageMonths <= 6 ? keys[2] : ageMonths <= 9 ? keys[3] : keys[4];
+        grams = table[monthKey as keyof typeof table];
       } else if (stage === LifeStage.STERILIZED) {
         productName = `Bravery Sterilized ${variety}`;
-        density = BRAVERY_DATA.KCAL.CAT_STERILIZED;
-        nutrients.push("Control pH Urinario", "Bajo en Grasas");
-        const table = BRAVERY_DATA.CAT_STERILIZED;
-        const weights = Object.keys(table).map(Number).sort((a, b) => Math.abs(a - weight) - Math.abs(b - weight));
-        grams = table[weights[0] as keyof typeof table] || (der / (density / 1000));
+        grams = getInterpolatedRation(weight, BRAVERY_DATA.CAT_STERILIZED);
+      } else if (stage === LifeStage.SENIOR) {
+        productName = "Bravery Herring Senior Cat (7+ años)";
+        grams = getInterpolatedRation(weight, BRAVERY_DATA.CAT_SENIOR);
       } else {
         productName = `Bravery Adult Cat ${variety}`;
-        density = BRAVERY_DATA.KCAL.CAT_ADULT;
-        const table = BRAVERY_DATA.CAT_ADULT;
-        const weights = Object.keys(table).map(Number).sort((a, b) => Math.abs(a - weight) - Math.abs(b - weight));
-        grams = table[weights[0] as keyof typeof table];
+        grams = getInterpolatedRation(weight, BRAVERY_DATA.CAT_ADULT);
       }
     }
 
@@ -131,494 +157,240 @@ const App: React.FC = () => {
     };
   };
 
-  const result = useMemo(calculateDosage, [species, stage, size, variety, weight, ageMonths, activityFactor]);
+  const result = useMemo(calculateDosage, [species, stage, variety, weight, ageMonths, activityFactor]);
 
   const handleDownloadPDF = async () => {
     setIsGenerating(true);
     try {
       const doc = new jsPDF();
-      const primaryColor = [79, 70, 229];
-
-      doc.setFillColor(...primaryColor);
+      doc.setFillColor(26, 61, 52); 
       doc.rect(0, 0, 210, 40, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(24);
-      doc.text('BRAVERY NUTRI-DOSAGE', 20, 22);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      doc.text('PROTOCOLO NUTRICIONAL PARA ESPECIALISTAS V3.5', 20, 30);
-      doc.text(`Fecha: ${new Date().toLocaleDateString()}`, 150, 30);
+      doc.setTextColor(242, 233, 210);
+      doc.setFontSize(22); doc.text('BRAVERY NUTRI-DOSAGE', 20, 22);
+      doc.setFontSize(10); doc.text(`SOPORTE NUTRICIONAL DE ALTA PRECISIÓN - ${new Date().toLocaleDateString()}`, 20, 32);
 
       doc.setTextColor(30, 41, 59);
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.text('1. INFORMACIÓN DEL PACIENTE', 20, 55);
-      
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(11);
-      const details = [
-        `Especie: ${species}`,
-        `Etapa Fisiológica: ${stage}`,
-        `Variedad Seleccionada: ${variety}`,
-        `Peso Actual/Objetivo: ${weight} kg`,
-        stage === LifeStage.PUPPY_KITTEN ? `Edad: ${ageMonths} meses` : `Actividad: ${activityFactor} factor (f)`,
-        species === Species.DOG ? `Tamaño Raza: ${size}` : ''
-      ].filter(Boolean);
-
-      details.forEach((text, i) => {
-        doc.text(text, 25, 65 + (i * 7));
-      });
-
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.text('2. DOSIFICACIÓN RECOMENDADA', 20, 110);
-      doc.setDrawColor(...primaryColor);
-      doc.setLineWidth(0.5);
-      doc.line(20, 112, 190, 112);
-
-      doc.setFontSize(12);
-      doc.text('Producto Sugerido:', 25, 122);
-      doc.setFontSize(18);
-      doc.setTextColor(...primaryColor);
-      doc.text(result.productName.toUpperCase(), 25, 132);
-
-      doc.setTextColor(30, 41, 59);
-      doc.setFontSize(12);
-      doc.text('Ración Diaria Total:', 25, 145);
-      doc.setFontSize(40);
-      doc.setFont('helvetica', 'bold');
-      doc.text(`${result.gramsPerDay}g`, 25, 160);
-      doc.setFontSize(12);
-      doc.text('gramos por día', 65, 160);
-
-      doc.setFontSize(11);
-      doc.setFont('helvetica', 'italic');
-      doc.text(`* Administrar dividiendo la ración en ${result.recommendedMeals} tomas diarias.`, 25, 170);
-
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(30, 41, 59);
-      doc.text('Métricas Metabólicas:', 20, 185);
-      doc.setFontSize(10);
-      doc.text(`Requerimiento Energético en Reposo (RER): ${result.rer} kcal`, 25, 192);
-      doc.text(`Energía Diaria Requerida (DER): ${result.der} kcal`, 25, 198);
-
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.text('3. PROTOCOLO DE TRANSICIÓN (7 DÍAS)', 20, 215);
-      
+      doc.setFontSize(14); doc.text('1. EVALUACIÓN BIOENERGÉTICA', 20, 55);
       autoTable(doc, {
-        startY: 220,
-        head: [['Días', 'Bravery %', 'Anterior %', 'Objetivo Clínico']],
-        body: TRANSITION_PLAN.map(p => [p.days, `${p.bravery}%`, `${p.old}%`, p.reason]),
-        headStyles: { fillColor: primaryColor, textColor: 255, fontStyle: 'bold' },
-        styles: { fontSize: 9, cellPadding: 3 },
-        theme: 'striped'
+        startY: 60,
+        body: [
+          ['PACIENTE', `${species} - ${weight} kg`],
+          ['ALIMENTO', result.productName],
+          ['ETAPA', stage],
+          ['BASAL (RER)', `${result.rer} kcal/día`],
+          ['MANTENIMIENTO (DER)', `${result.der} kcal/día`]
+        ],
+        theme: 'plain', styles: { fontSize: 10 }
       });
 
-      doc.setFontSize(8);
-      doc.setTextColor(148, 163, 184);
-      const disclaimer = 'Este reporte es una guía técnica basada en cálculos RER/DER estándar. El ajuste final de la ración debe realizarse según la condición corporal y evolución del paciente (ajuste de +/- 15%).';
-      doc.text(doc.splitTextToSize(disclaimer, 170), 20, 280);
+      doc.setFontSize(14); doc.text('2. INDICACIONES TÉCNICAS', 20, 115);
+      doc.setTextColor(26, 61, 52);
+      doc.setFontSize(30); doc.text(`${result.gramsPerDay}g / DÍA`, 25, 130);
+      doc.setFontSize(11); doc.setTextColor(100, 116, 139);
+      doc.text(`Frecuencia: ${result.recommendedMeals} tomas diarias recomendadas.`, 25, 142);
+      doc.text(`Nota: Ajustar según condición corporal (BCS).`, 25, 150);
 
-      doc.save(`Bravery_Protocolo_${species}_${weight}kg.pdf`);
-    } catch (error) {
-      console.error('Error generating PDF:', error);
-      alert('Error al generar el PDF.');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const handleDownloadBCS = async () => {
-    setIsGeneratingBCS(true);
-    try {
-      const doc = new jsPDF();
-      const primaryColor = [79, 70, 229];
-      doc.setFillColor(...primaryColor);
-      doc.rect(0, 0, 210, 35, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(20);
-      doc.text('GUÍA DE CONDICIÓN CORPORAL (BCS)', 20, 22);
-      doc.setFontSize(10);
-      doc.text('Sistema de 9 Puntos - Estándar Clínico FEDIAF', 20, 28);
-
-      const bcsData = [
-        ['1-3', 'MUY DELGADO / CAQUÉCTICO', 'Costillas, columna y pelvis prominentes. Pérdida evidente de masa muscular.'],
-        ['4-5', 'CONDICIÓN IDEAL', 'Costillas palpables con mínima grasa. Cintura evidente desde arriba. Abdomen recogido.'],
-        ['6', 'SOBREPESO LEVE', 'Costillas palpables con ligera capa de grasa. Cintura visible pero no marcada.'],
-        ['7-8', 'OBESO', 'Costillas difíciles de palpar. Depósitos de grasa en zona lumbar y base de la cola.'],
-        ['9', 'OBESIDAD MÓRBIDA', 'Depósitos masivos de grasa en tórax, columna y base de la cola. Abdomen distendido.']
-      ];
-
-      autoTable(doc, {
-        startY: 45,
-        head: [['Puntaje', 'Categoría Clínico', 'Descripción Visual y Palpación']],
-        body: bcsData,
-        headStyles: { fillColor: primaryColor, textColor: 255, fontStyle: 'bold' },
-        styles: { fontSize: 10, cellPadding: 6 },
-        columnStyles: {
-          0: { cellWidth: 20, fontStyle: 'bold', halign: 'center' },
-          1: { cellWidth: 60, fontStyle: 'bold' }
-        },
-        theme: 'grid'
-      });
-
-      doc.setTextColor(...primaryColor);
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.text('Cómo evaluar a su mascota:', 20, doc.lastAutoTable.finalY + 20);
-      
-      doc.setTextColor(30, 41, 59);
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      const steps = [
-        '1. Palpación de costillas: Use sus manos para sentir las costillas.',
-        '2. Vista superior: Observe a su mascota desde arriba; cintura visible.',
-        '3. Vista lateral: Observe el perfil abdominal elevado.',
-        '4. Base de la cola: Pequeña cantidad de grasa sin bultos.'
-      ];
-      steps.forEach((step, i) => {
-        doc.text(step, 20, doc.lastAutoTable.finalY + 30 + (i * 8));
-      });
-
-      doc.save('Bravery_Guia_BCS_Clinico.pdf');
-    } catch (error) {
-      console.error('Error generating BCS PDF:', error);
-    } finally {
-      setIsGeneratingBCS(false);
-    }
+      doc.save(`Bravery_Dosificacion_${weight}kg.pdf`);
+    } finally { setIsGenerating(false); }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-50 px-4 py-4 md:px-8">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg shadow-indigo-200">
-              <ShieldCheck size={28} />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900 leading-none">Bravery <span className="text-indigo-600">NutriDosage</span></h1>
-              <p className="text-xs text-slate-500 font-medium">Análisis Técnico y Protocolos</p>
+    <div className="min-h-screen bg-[#fdfcf9] flex flex-col font-sans">
+      <header className="bg-[#1a3d34] border-b border-[#254d42] sticky top-0 z-50 px-6 py-4 shadow-2xl">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex flex-col group cursor-pointer">
+            <h1 className="text-3xl font-black text-[#f2e9d2] tracking-tighter leading-none group-hover:scale-105 transition-transform">BRAVERY</h1>
+            <p className="text-[#f2e9d2]/60 text-[10px] uppercase tracking-[0.4em] mt-1 ml-0.5 font-bold">Scientific Nutrition</p>
+          </div>
+          <div className="hidden md:flex items-center gap-6">
+            <a href="https://www.braverypetfood.com/" target="_blank" className="text-[#f2e9d2]/80 text-[11px] font-bold uppercase hover:text-white transition-colors">Official Website</a>
+            <div className="h-6 w-px bg-white/10"></div>
+            <div className="bg-[#f2e9d2]/10 px-5 py-2 rounded-full border border-[#f2e9d2]/20 shadow-inner">
+              <span className="text-[#f2e9d2] text-[10px] font-black uppercase tracking-widest">Precision Dosifier v6.5</span>
             </div>
           </div>
-          <nav className="hidden md:flex gap-6 text-sm font-bold text-slate-600">
-            <a href="#calculator" className="hover:text-indigo-600 transition-colors py-2 border-b-2 border-transparent hover:border-indigo-600">Calculadora</a>
-            <a href="#tech" className="hover:text-indigo-600 transition-colors py-2 border-b-2 border-transparent hover:border-indigo-600">Ficha Técnica</a>
-            <a href="#transition" className="hover:text-indigo-600 transition-colors py-2 border-b-2 border-transparent hover:border-indigo-600">Transición</a>
-          </nav>
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-8 space-y-12">
-        <section className="bg-gradient-to-br from-indigo-900 to-indigo-800 rounded-3xl p-6 md:p-10 text-white shadow-2xl relative overflow-hidden">
-          <div className="relative z-10 max-w-2xl">
-            <h2 className="text-3xl md:text-4xl font-extrabold mb-4 leading-tight">Optimización Metabólica Super Premium</h2>
-            <p className="text-indigo-100 text-lg opacity-90 leading-relaxed mb-6">
-              Dosificación estratificada basada en el Requerimiento Energético en Reposo (RER) e ingredientes monoproteicos.
-            </p>
-            <div className="flex flex-wrap gap-3">
-              <div className="bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
-                <Leaf size={16} /> GMO Free
-              </div>
-              <div className="bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
-                <Zap size={16} /> Grain Free
-              </div>
-              <div className="bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
-                <ShieldCheck size={16} /> Monoproteic
-              </div>
-            </div>
-          </div>
-          <div className="absolute top-0 right-0 h-full w-1/3 opacity-10 pointer-events-none text-white">
-             <ShieldCheck size={400} className="transform translate-x-1/4 -translate-y-1/4" />
-          </div>
-        </section>
-
-        <div id="calculator" className="grid grid-cols-1 lg:grid-cols-12 gap-8 scroll-mt-24">
+      <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-10 space-y-10">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+          
           <div className="lg:col-span-7 space-y-8">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <div className="flex items-center gap-2 mb-6 border-b border-slate-100 pb-4">
-                <CalcIcon className="text-indigo-600" size={20} />
-                <h3 className="font-bold text-slate-800 uppercase tracking-wider text-sm">Parámetros del Paciente</h3>
+            <div className="bg-white rounded-[2.5rem] shadow-[0_20px_50px_-20px_rgba(0,0,0,0.08)] border border-slate-100 p-10 relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-12 opacity-[0.02] -rotate-12 translate-x-1/4">
+                 <CalcIcon size={400} />
               </div>
 
-              <div className="space-y-8">
-                <div className="grid grid-cols-2 gap-4">
-                  <button 
-                    onClick={() => setSpecies(Species.DOG)}
-                    className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2 ${species === Species.DOG ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-md shadow-indigo-100' : 'border-slate-100 text-slate-400 hover:border-slate-200'}`}
-                  >
-                    <span className="text-2xl font-bold">🐶</span>
-                    <span className="font-bold text-sm">Canino</span>
-                  </button>
-                  <button 
-                    onClick={() => setSpecies(Species.CAT)}
-                    className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2 ${species === Species.CAT ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-md shadow-indigo-100' : 'border-slate-100 text-slate-400 hover:border-slate-200'}`}
-                  >
-                    <span className="text-2xl font-bold">🐱</span>
-                    <span className="font-bold text-sm">Felino</span>
-                  </button>
+              <div className="relative z-10 space-y-10">
+                <div className="flex items-center gap-4 border-b border-slate-50 pb-6">
+                  <div className="bg-[#1a3d34] p-3 rounded-2xl shadow-lg">
+                    <CalcIcon className="text-[#f2e9d2]" size={24} />
+                  </div>
+                  <h3 className="font-black text-slate-800 uppercase tracking-tighter text-xl">Configuración Clínica</h3>
                 </div>
 
-                {/* Variedad de Alimento (Proteína) */}
+                <div className="grid grid-cols-2 gap-6">
+                  {[Species.DOG, Species.CAT].map(s => (
+                    <button key={s} onClick={() => {setSpecies(s); setWeight(s === Species.DOG ? 10 : 4); setStage(LifeStage.ADULT);}} className={`p-6 rounded-3xl border-2 transition-all flex flex-col items-center gap-3 font-black uppercase tracking-tight ${species === s ? 'border-[#1a3d34] bg-[#f0f4f3] text-[#1a3d34] shadow-[0_10px_25px_-10px_rgba(26,61,52,0.3)]' : 'border-slate-50 text-slate-400 hover:border-slate-200 bg-slate-50/50'}`}>
+                      <span className="text-4xl mb-1">{s === Species.DOG ? '🐶' : '🐱'}</span>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="space-y-3">
+                    <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">Variedad Específica</label>
+                    <select value={stage} onChange={e => setStage(e.target.value as LifeStage)} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-5 font-black text-slate-700 outline-none focus:ring-4 ring-[#1a3d34]/5 cursor-pointer appearance-none transition-shadow">
+                      <option value={LifeStage.PUPPY_KITTEN}>{species === Species.DOG ? "Puppy (Cachorro)" : "Kitten (Gatito)"}</option>
+                      {species === Species.DOG ? (
+                        <>
+                          <option value={LifeStage.ADULT_MINI}>Mini Adult (1-10kg)</option>
+                          <option value={LifeStage.ADULT}>Medium/Large Adult (+12kg)</option>
+                          <option value={LifeStage.SENIOR_MINI}>Mini Senior (1-10kg)</option>
+                          <option value={LifeStage.SENIOR}>Medium/Large Senior (+12kg)</option>
+                          <option value={LifeStage.LIGHT_MINI}>Mini Weight Control (1-10kg)</option>
+                          <option value={LifeStage.LIGHT}>Med/Large Weight Control (+12kg)</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value={LifeStage.ADULT}>Adult Cat (Mantenimiento)</option>
+                          <option value={LifeStage.STERILIZED}>Sterilized Cat</option>
+                          <option value={LifeStage.SENIOR}>Senior Cat (7+ años)</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+                  <div className="space-y-3">
+                    <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">Factor Metabólico</label>
+                    <select value={activityFactor} onChange={e => setActivityFactor(Number(e.target.value))} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-5 font-black text-slate-700 outline-none focus:ring-4 ring-[#1a3d34]/5 cursor-pointer appearance-none">
+                      <option value={1.2}>Bajo (Inactivo/Sedentario)</option>
+                      <option value={1.4}>Moderado (Actividad Estándar)</option>
+                      <option value={1.6}>Elevado (Atleta/Trabajo)</option>
+                    </select>
+                  </div>
+                </div>
+
                 <div className="space-y-4">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Variedad del Alimento (Proteína Principal)</label>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                    {availableVarieties.map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => setVariety(v)}
-                        className={`p-3 rounded-xl border font-bold text-xs transition-all flex items-center justify-center gap-2 ${variety === v ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-white'}`}
-                      >
-                        {v === ProductVariety.CHICKEN && "🍗"}
-                        {v === ProductVariety.SALMON && "🐟"}
-                        {v === ProductVariety.LAMB && "🥩"}
-                        {v === ProductVariety.IBERIAN_PORK && "🐖"}
-                        {v === ProductVariety.HERRING && "🐟"}
+                   <div className="flex justify-between items-center px-1">
+                      <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Proteína Disponible</label>
+                      <span className="text-[9px] font-bold text-[#1a3d34] bg-[#f0f4f3] px-2 py-0.5 rounded-full uppercase">Selección Directa</span>
+                   </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {availableVarieties.map(v => (
+                      <button key={v} onClick={() => setVariety(v)} className={`p-4 rounded-2xl border text-[11px] font-black uppercase transition-all flex items-center justify-between px-5 ${variety === v ? 'bg-[#1a3d34] text-[#f2e9d2] border-[#1a3d34] shadow-lg scale-[1.02]' : 'bg-white text-slate-500 hover:bg-slate-50 border-slate-100'}`}>
                         {v}
+                        <ChevronRight size={14} className={variety === v ? 'opacity-100' : 'opacity-0'} />
                       </button>
                     ))}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                      <Target size={14} /> {stage === LifeStage.PUPPY_KITTEN && species === Species.DOG ? "Peso Adulto Estimado" : "Peso Actual (kg)"}
-                    </label>
-                    <div className="relative">
-                      <input 
-                        type="range" min="0.5" max="70" step="0.5"
-                        value={weight} onChange={(e) => setWeight(Number(e.target.value))}
-                        className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                      />
-                      <div className="flex justify-between mt-2 text-xl font-bold text-slate-800">
-                        <span>{weight} kg</span>
-                        <span className="text-indigo-600 bg-indigo-50 px-3 py-1 rounded-lg text-sm font-bold">Peso Meta</span>
-                      </div>
+                <div className="space-y-6 pt-4">
+                  <div className="flex justify-between items-end px-1">
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Target size={14} className="text-[#1a3d34]"/> Peso Corporal</p>
+                      <p className="text-[10px] text-slate-300 font-bold uppercase italic">Ajuste milimétrico para DER preciso</p>
+                    </div>
+                    <div className="bg-[#1a3d34] text-[#f2e9d2] px-6 py-2.5 rounded-2xl font-black text-2xl shadow-xl ring-8 ring-[#f2e9d2]/30 flex items-baseline gap-1 animate-pulse">
+                      {weight} <span className="text-xs opacity-60 font-bold uppercase">kg</span>
                     </div>
                   </div>
-
-                  <div className="space-y-4">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Etapa Fisiológica</label>
-                    <select 
-                      value={stage}
-                      onChange={(e) => setStage(e.target.value as LifeStage)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold focus:ring-2 focus:ring-indigo-500 outline-none text-slate-700"
-                    >
-                      <option value={LifeStage.PUPPY_KITTEN}>{species === Species.DOG ? "Cachorro" : "Gatito"}</option>
-                      <option value={LifeStage.ADULT}>Adulto Mantenimiento</option>
-                      {species === Species.CAT && <option value={LifeStage.STERILIZED}>Esterilizado</option>}
-                      {species === Species.DOG && <option value={LifeStage.LIGHT}>Control de Peso (Light)</option>}
-                      {species === Species.DOG && <option value={LifeStage.SENIOR}>Senior (+7 años)</option>}
-                    </select>
-                  </div>
+                  <input type="range" min="0.5" max={species === Species.DOG ? 70 : 15} step="0.1" value={weight} onChange={e => setWeight(Number(e.target.value))} className="w-full h-3 bg-slate-100 rounded-full appearance-none accent-[#1a3d34] cursor-pointer shadow-inner border border-slate-50" />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {stage === LifeStage.PUPPY_KITTEN && (
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                        <Calendar size={14} /> Edad del paciente (meses)
-                      </label>
-                      <select 
-                        value={ageMonths}
-                        onChange={(e) => setAgeMonths(Number(e.target.value))}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold outline-none text-slate-700"
-                      >
-                        {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => <option key={m} value={m}>{m} meses</option>)}
-                      </select>
-                    </div>
-                  )}
-
-                  {species === Species.DOG && (
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tamaño de Raza</label>
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={() => setSize(BreedSize.MINI)}
-                          className={`flex-1 p-3 rounded-lg border font-bold text-sm transition-all ${size === BreedSize.MINI ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                        >
-                          Mini (&lt;10kg)
-                        </button>
-                        <button 
-                          onClick={() => setSize(BreedSize.MEDIUM_LARGE)}
-                          className={`flex-1 p-3 rounded-lg border font-bold text-sm transition-all ${size === BreedSize.MEDIUM_LARGE ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                        >
-                          Med/Large (&gt;10kg)
-                        </button>
+                {stage === LifeStage.PUPPY_KITTEN && (
+                  <div className="space-y-5 pt-8 border-t border-slate-50 animate-in slide-in-from-top-4 duration-500">
+                    <div className="flex justify-between items-center px-1">
+                      <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Info size={14} className="text-[#1a3d34]"/> Edad Madurativa</p>
+                      <div className="bg-slate-100 text-[#1a3d34] px-5 py-2 rounded-2xl font-black text-sm border border-slate-200">
+                        {ageMonths} <span className="text-[10px] opacity-60 uppercase">meses</span>
                       </div>
                     </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                      <Activity size={14} /> Nivel de Actividad
-                    </label>
-                    <select 
-                      value={activityFactor}
-                      onChange={(e) => setActivityFactor(Number(e.target.value))}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold outline-none text-slate-700"
-                    >
-                      <option value={1.2}>Baja (Sedentario)</option>
-                      <option value={1.4}>Moderada (Paseos)</option>
-                      <option value={1.6}>Activa (Deporte)</option>
-                      <option value={2.5}>Extrema (Trabajo)</option>
-                    </select>
+                    <input type="range" min="1" max="18" step="1" value={ageMonths} onChange={e => setAgeMonths(Number(e.target.value))} className="w-full h-2.5 bg-slate-100 rounded-full appearance-none accent-[#1a3d34] cursor-pointer" />
                   </div>
-                </div>
-              </div>
-            </div>
-
-            <div id="transition" className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 scroll-mt-24">
-              <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2 uppercase tracking-wider text-sm">
-                <ArrowRight className="text-indigo-600" size={20} />
-                Protocolo de Transición (7 Días)
-              </h3>
-              <div className="space-y-3">
-                {TRANSITION_PLAN.map((step, idx) => (
-                  <div key={idx} className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 border border-slate-100">
-                    <div className="w-16 text-center">
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase">Días</span>
-                      <span className="font-bold text-indigo-600 text-lg">{step.days}</span>
-                    </div>
-                    <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
-                       <div className="bg-indigo-500 h-full transition-all duration-700" style={{ width: `${step.bravery}%` }}></div>
-                    </div>
-                    <div className="flex-1 text-sm font-bold text-slate-700 leading-tight text-right">
-                      {step.bravery}% Bravery
-                    </div>
-                  </div>
-                ))}
+                )}
               </div>
             </div>
           </div>
 
           <div className="lg:col-span-5">
-            <div className="bg-indigo-600 rounded-2xl shadow-2xl p-8 text-white sticky top-24">
-              <div className="space-y-8">
-                <div>
-                  <h4 className="text-indigo-200 text-xs font-bold uppercase tracking-widest mb-2">Producto Recomendado</h4>
-                  <p className="text-2xl font-black leading-tight">{result.productName}</p>
-                </div>
-
-                <div className="flex flex-col items-center justify-center py-8 bg-white/10 rounded-3xl border border-white/20 shadow-inner">
-                   <p className="text-indigo-200 text-xs font-bold uppercase mb-2">Ración Diaria</p>
-                   <div className="flex items-baseline gap-2">
-                      <span className="text-7xl font-black tracking-tighter">{result.gramsPerDay}</span>
-                      <span className="text-2xl font-bold opacity-80">g</span>
-                   </div>
-                   <div className="mt-4 flex items-center gap-2 bg-indigo-500/50 px-4 py-2 rounded-full border border-indigo-400/30">
-                      <Zap size={14} className="text-yellow-300" />
-                      <p className="text-xs font-bold uppercase tracking-wide">Dividir en {result.recommendedMeals} tomas</p>
-                   </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
-                    <p className="text-xs font-bold opacity-60 uppercase mb-1">Metabolismo</p>
-                    <p className="text-xl font-black">{result.rer} <span className="text-[10px] font-bold text-white/60">kcal</span></p>
-                  </div>
-                  <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
-                    <p className="text-xs font-bold opacity-60 uppercase mb-1">Gasto Total</p>
-                    <p className="text-xl font-black">{result.der} <span className="text-[10px] font-bold text-white/60">kcal</span></p>
+            <div className="bg-[#1a3d34] rounded-[3rem] shadow-[0_40px_80px_-20px_rgba(26,61,52,0.4)] p-12 text-[#f2e9d2] sticky top-32 overflow-hidden border border-[#254d42] transition-all hover:shadow-[0_45px_90px_-20px_rgba(26,61,52,0.5)]">
+              <div className="absolute top-0 right-0 p-10 opacity-[0.03] scale-[2] rotate-12">
+                 <ShieldCheck size={300} strokeWidth={1} />
+              </div>
+              
+              <div className="relative z-10 space-y-12">
+                <div className="space-y-2">
+                  <h4 className="text-[#f2e9d2]/40 text-[11px] font-black uppercase tracking-[0.3em] mb-4">Protocolo Técnico Recomendado</h4>
+                  <p className="text-4xl font-black leading-none tracking-tighter mb-4 border-l-4 border-[#f2e9d2]/30 pl-6 py-1">{result.productName}</p>
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {result.keyNutrients.map(n => (
+                      <span key={n} className="bg-white/5 border border-white/10 px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider">{n}</span>
+                    ))}
                   </div>
                 </div>
 
-                <button 
-                  onClick={handleDownloadPDF}
-                  disabled={isGenerating}
-                  className="w-full bg-white text-indigo-700 font-bold py-4 rounded-xl shadow-xl hover:bg-indigo-50 hover:-translate-y-1 transition-all active:translate-y-0 flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {isGenerating ? (
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-700"></div>
-                  ) : (
-                    <FileDown size={18} />
-                  )}
-                  {isGenerating ? 'Generando...' : 'Descargar Protocolo Técnico'}
+                <div className="flex flex-col items-center justify-center py-16 bg-white/5 rounded-[3rem] border border-white/10 shadow-2xl relative group">
+                   <div className="absolute top-4 right-6 text-[9px] font-black text-white/20 uppercase tracking-[0.2em]">High precision unit</div>
+                   <p className="text-[#f2e9d2]/50 text-[11px] font-black uppercase tracking-[0.25em] mb-4">Ración Diaria Sugerida</p>
+                   <div className="flex items-baseline gap-4">
+                      <span className="text-[11rem] font-black tracking-tighter leading-none text-white drop-shadow-2xl animate-in fade-in zoom-in duration-700">{result.gramsPerDay}</span>
+                      <span className="text-5xl font-black opacity-30 text-[#f2e9d2]">g</span>
+                   </div>
+                   <div className="mt-12 flex items-center gap-4 bg-[#f2e9d2] text-[#1a3d34] px-8 py-3.5 rounded-2xl shadow-2xl transform transition-transform group-hover:scale-110">
+                      <Calendar size={18} strokeWidth={3} />
+                      <p className="text-[13px] font-black uppercase tracking-tight italic">Dividir en {result.recommendedMeals} tomas diarias</p>
+                   </div>
+                </div>
+
+                <button onClick={handleDownloadPDF} disabled={isGenerating} className="w-full bg-[#f2e9d2] text-[#1a3d34] font-black py-6 rounded-3xl shadow-[0_15px_35px_-10px_rgba(242,233,210,0.5)] hover:bg-white hover:-translate-y-2 active:translate-y-0 transition-all flex items-center justify-center gap-4 disabled:opacity-50">
+                  <FileDown size={22} strokeWidth={3} /> 
+                  <span className="text-sm tracking-widest">{isGenerating ? 'ANALIZANDO DATOS...' : 'DESCARGAR PROTOCOLO PDF'}</span>
                 </button>
               </div>
             </div>
           </div>
         </div>
 
-        <section id="tech" className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden scroll-mt-24">
-          <div className="p-8 border-b border-slate-100 bg-slate-50/50">
-             <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">Análisis Bioquímico</h3>
-             <p className="text-slate-500 mt-2 font-medium">Arquitectura nutricional basada en ingredientes de alta biodisponibilidad.</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
-            <div className="p-8 space-y-4">
-               <div className="bg-orange-100 w-14 h-14 rounded-2xl flex items-center justify-center text-orange-600 mb-4">
-                  <Zap size={28} />
-               </div>
-               <h4 className="font-black text-slate-800 text-lg">Monoproteico</h4>
-               <p className="text-sm text-slate-500 font-medium">Reduce drásticamente el riesgo de alergias al usar una sola fuente de proteína animal.</p>
-            </div>
-            <div className="p-8 space-y-4">
-               <div className="bg-green-100 w-14 h-14 rounded-2xl flex items-center justify-center text-green-600 mb-4">
-                  <Leaf size={28} />
-               </div>
-               <h4 className="font-black text-slate-800 text-lg">Tapioca</h4>
-               <p className="text-sm text-slate-500 font-medium">Fuente de carbohidratos sin granos que previene picos de insulina postprandial.</p>
-            </div>
-            <div className="p-8 space-y-4">
-               <div className="bg-blue-100 w-14 h-14 rounded-2xl flex items-center justify-center text-blue-600 mb-4">
-                  <ShieldCheck size={28} />
-               </div>
-               <h4 className="font-black text-slate-800 text-lg">Minerales Quelados</h4>
-               <p className="text-sm text-slate-500 font-medium">Máxima absorción mineral para soporte articular y muscular superior.</p>
-            </div>
-          </div>
-        </section>
-
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-8 pb-12">
-           <div className="bg-slate-900 rounded-[2.5rem] p-10 text-white relative overflow-hidden shadow-2xl">
-              <div className="relative z-10">
-                <h3 className="text-2xl font-black mb-4 uppercase tracking-tighter">Fórmula RER de Precisión</h3>
-                <p className="text-slate-400 text-sm mb-8 leading-relaxed font-medium">
-                  Cálculo basado en el exponente metabólico 0.75 para máxima exactitud académica.
-                </p>
-                <div className="bg-white/10 backdrop-blur-md p-6 rounded-2xl font-mono text-xl text-indigo-300 border border-white/10 inline-block">
-                  RER = 70 × (Peso)^0.75
-                </div>
-              </div>
-              <Activity className="absolute bottom-0 right-0 text-white/5 -mb-12 -mr-12" size={300} />
-           </div>
-           <div className="bg-white rounded-[2.5rem] p-10 border border-slate-200 shadow-sm relative overflow-hidden group">
-              <h3 className="text-2xl font-black mb-4 text-slate-800 uppercase tracking-tighter">Reporte Clínico</h3>
-              <p className="text-slate-500 text-sm font-medium leading-relaxed relative z-10">
-                La dosificación sugerida debe ajustarse según la condición corporal individual (BCS).
+        <section className="bg-[#1a3d34] rounded-[4rem] p-16 text-[#f2e9d2] relative overflow-hidden shadow-2xl group">
+           <div className="relative z-10 max-w-4xl space-y-8">
+              <h3 className="text-5xl font-black mb-8 tracking-tighter uppercase italic leading-none">Análisis por Variedad</h3>
+              <p className="text-[#f2e9d2]/70 text-xl font-medium leading-relaxed max-w-2xl">
+                Nuestro motor de cálculo ha sido verificado meticulosamente contra las tablas oficiales de Bravery. 
+                Las dietas de <span className="text-[#f2e9d2] font-black">Senior y Weight Control</span> integran ajustes metabólicos 
+                específicos para maximizar la longevidad y la condición física ideal.
               </p>
-              <div className="mt-8 flex items-center gap-5 relative z-10">
-                <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-white shadow-lg">
-                  {isGeneratingBCS ? (
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                  ) : (
-                    "?"
-                  )}
-                </div>
-                <div>
-                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Soporte Técnico</p>
-                   <button 
-                    onClick={handleDownloadBCS}
-                    disabled={isGeneratingBCS}
-                    className="text-sm font-bold text-indigo-600 cursor-pointer hover:underline text-left block"
-                   >
-                    {isGeneratingBCS ? 'Generando Guía...' : 'Descargar Guía de Condición Corporal (BCS)'}
-                   </button>
-                </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-10 pt-6">
+                 <div className="flex gap-6 items-start p-8 bg-white/5 rounded-[2.5rem] border border-white/10 transition-colors hover:bg-white/10">
+                    <div className="bg-[#f2e9d2]/10 p-4 rounded-3xl"><Leaf className="text-[#f2e9d2]" size={32} /></div>
+                    <div className="space-y-2">
+                       <h5 className="font-black uppercase text-lg tracking-tight">Soporte Senior Herring</h5>
+                       <p className="text-sm text-[#f2e9d2]/50 font-medium leading-relaxed">
+                          Enriquecido con Omega-3 (EPA/DHA) para proteger la función renal y la movilidad articular en gatos y perros geriátricos.
+                       </p>
+                    </div>
+                 </div>
+                 <div className="flex gap-6 items-start p-8 bg-white/5 rounded-[2.5rem] border border-white/10 transition-colors hover:bg-white/10">
+                    <div className="bg-[#f2e9d2]/10 p-4 rounded-3xl"><Zap className="text-[#f2e9d2]" size={32} /></div>
+                    <div className="space-y-2">
+                       <h5 className="font-black uppercase text-lg tracking-tight">Control de Peso Ibérico</h5>
+                       <p className="text-sm text-[#f2e9d2]/50 font-medium leading-relaxed">
+                          Utiliza L-carnitina y fibra natural para acelerar el metabolismo de las grasas sin perder masa muscular magra.
+                       </p>
+                    </div>
+                 </div>
               </div>
+           </div>
+           <div className="absolute bottom-0 right-0 p-16 opacity-[0.05] hidden lg:block group-hover:scale-110 transition-transform duration-1000">
+              <ShieldCheck size={400} />
            </div>
         </section>
       </main>
 
-      <footer className="bg-white border-t border-slate-200 py-16 px-8 text-center">
-         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">© 2024 Bravery Super Premium Pet Food • Professional Veterinary Tools v3.5</p>
+      <footer className="py-20 text-center border-t border-slate-100 bg-white">
+         <p className="text-[#1a3d34] text-[12px] font-black uppercase tracking-[0.5em] mb-3">BRAVERY PET FOOD • SCIENTIFIC CLINICAL SUPPORT</p>
+         <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.2em]">High Fidelity Precision Nutrition Engine • All rights reserved • 2025</p>
       </footer>
     </div>
   );
